@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>黑暗中的逃脫：NVDA 體驗模擬器 (最終版)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 模擬 NVDA 的焦點框線樣式 */
+        :focus {
+            outline: 4px solid #FFFF00;
+            background-color: #00008B;
+            color: white;
+        }
+
+        /* 全黑模式遮罩 */
+        #blind-curtain {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background-color: black;
+            z-index: 9999;
+            display: none;
+            cursor: none;
+        }
+
+        body {
+            font-family: 'Noto Sans TC', sans-serif;
+            background-color: #f0f0f0;
+            color: #333;
+            transition: all 0.3s;
+        }
+
+        /* 遊戲區域樣式 */
+        .game-area {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        .item-btn {
+            width: 100%;
+            text-align: left;
+            padding: 1rem;
+            margin-bottom: 0.5rem;
+            background: white;
+            border: 2px solid #ccc;
+            border-radius: 8px;
+            font-size: 1.2rem;
+            transition: all 0.2s;
+        }
+
+        /* 停用狀態樣式 */
+        .item-btn:disabled {
+            background-color: #e0e0e0;
+            color: #999;
+            cursor: not-allowed;
+            border-color: #ddd;
+        }
+
+        .item-btn:not(:disabled):hover {
+            background-color: #e6e6e6;
+        }
+
+        /* 讓所有文字在被閱讀游標選中時有視覺回饋 (給老師看) */
+        .virtual-focus {
+            outline: 2px dashed red;
+            background-color: #ffe4e1;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 全黑遮罩 -->
+    <div id="blind-curtain"></div>
+
+    <div class="game-area" id="main-content">
+        <header class="mb-8 border-b-2 border-gray-300 pb-4">
+            <!-- H1: 頁面主標題 -->
+            <h1 class="text-3xl font-bold mb-2" tabindex="-1">NVDA 視障體驗：黑暗密室 (最終版)</h1>
+            
+            <div id="instructions" class="bg-blue-100 p-4 rounded-lg mb-4 text-sm border-l-4 border-blue-500">
+                <h2 class="font-bold text-lg mb-2" tabindex="-1">操作說明 (快捷鍵)</h2>
+                <ul class="list-disc pl-5 space-y-1">
+                    <li><strong>Tab</strong>：移動到下一個按鈕/輸入框。</li>
+                    <li><strong>Enter</strong>：執行/確認。</li>
+                    <li><strong>↓ (下箭頭)</strong>：<span class="text-red-600 font-bold">NVDA 閱讀模式</span> - 閱讀下一個元素 (重要！用於讀取非按鈕的文字)。</li>
+                    <li><strong>↑ (上箭頭)</strong>：閱讀上一個元素。</li>
+                    <li><strong>H</strong>：在標題間循環跳轉 (H1 -> H2 -> H3)。</li>
+                    <li><strong>Ctrl</strong>：停止朗讀。</li>
+                </ul>
+            </div>
+            
+            <div class="flex gap-4">
+                <button id="start-btn" class="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 font-bold text-lg">
+                    開始體驗 (進入全黑模式)
+                </button>
+                <button id="toggle-visual-btn" class="bg-gray-500 text-white px-4 py-2 rounded text-sm">
+                    教師專用：開關視覺 (F9)
+                </button>
+            </div>
+
+            <!-- 新增：關卡設計者資訊 -->
+            <div class="mt-6 text-gray-500 text-sm font-medium">
+                關卡設計者: Gemini Chen
+            </div>
+
+            <div id="status-log" class="mt-4 p-2 bg-yellow-100 text-sm border border-yellow-300 rounded hidden">
+                <strong>語音輸出紀錄:</strong> <span id="last-spoken">...</span>
+            </div>
+        </header>
+
+        <!-- 遊戲主場景 -->
+        <main id="game-container" class="hidden" aria-live="polite">
+            <!-- H2: 場景標題 -->
+            <h2 id="scene-heading" tabindex="-1" class="text-2xl font-bold mb-4 text-purple-800">房間中央</h2>
+            
+            <div id="scene-description" class="readable mb-4 text-lg p-2 bg-white rounded shadow-sm" tabindex="-1">
+                你醒在一個冰冷的房間。四周一片漆黑，你只能依賴聽覺和觸覺。
+            </div>
+
+            <!-- H3: 背包狀態 -->
+            <h3 class="font-bold text-md text-gray-700 mb-1" tabindex="-1">背包狀態</h3>
+            <div id="inventory-display" class="readable mb-4 text-sm text-gray-600 p-2 bg-gray-100 rounded" tabindex="-1">
+                背包物品: 無
+            </div>
+
+            <!-- 互動按鈕區 -->
+            <div id="interaction-area" class="flex flex-col gap-2">
+                <!-- JS 動態生成 -->
+            </div>
+        </main>
+    </div>
+
+    <script>
+        // --- 遊戲狀態管理 ---
+        const gameState = {
+            doorOpen: false,
+            safeUnlocked: false,
+            hasScrewdriver: false,
+            hasRustyKey: false,
+            hasBattery: false,
+            hasKeycard: false,
+            drawerOpen: false,
+            radioUnscrewed: false,
+            radioFixed: false,
+            diaryRead: false,
+            paintingExamined: false, 
+            inventory: [],
+            isBlindMode: false,
+            codeKnown: false, 
+        };
+
+        // --- 語音合成核心 ---
+        const synth = window.speechSynthesis;
+        let voices = [];
+        let isSystemSpeaking = false; 
+
+        function loadVoices() {
+            voices = synth.getVoices();
+        }
+        if (speechSynthesis.onvoiceschanged !== undefined) {
+            speechSynthesis.onvoiceschanged = loadVoices;
+        }
+
+        function speak(text, role = "", interrupt = true) {
+            if (isSystemSpeaking && !interrupt) return;
+            if (interrupt) synth.cancel();
+
+            const logEl = document.getElementById('last-spoken');
+            const roleText = role ? ` (${role})` : "";
+            if(logEl) logEl.innerText = text + roleText;
+
+            const fullText = role ? `${text}, ${role}` : text;
+            const utterance = new SpeechSynthesisUtterance(fullText);
+            
+            const zhVoice = voices.find(v => v.lang === 'zh-TW') || voices.find(v => v.lang.includes('zh'));
+            if (zhVoice) utterance.voice = zhVoice;
+
+            utterance.rate = 1.3; 
+            utterance.pitch = 1;
+
+            synth.speak(utterance);
+            return utterance;
+        }
+
+        // --- 關鍵修正：原地更新按鈕狀態，不跳轉場景 ---
+        function handleInteractionInPlace(event, speechText, newButtonText, callback) {
+            const btn = event.target;
+            if(!btn) return;
+
+            // 1. 鎖定按鈕，避免連點
+            btn.disabled = true;
+            isSystemSpeaking = true;
+
+            // 2. 播放語音
+            const utterance = speak(speechText, "", true);
+
+            const finish = () => {
+                isSystemSpeaking = false;
+                // 3. 更新按鈕文字
+                if(newButtonText) {
+                    btn.innerText = newButtonText;
+                }
+                // 4. 解鎖並保持焦點
+                btn.disabled = false;
+                btn.focus();
+                
+                // 執行額外邏輯 (如更新背包顯示)
+                if(callback) callback();
+            };
+
+            if (utterance) {
+                utterance.onend = () => {
+                    // 語音講完後稍作停頓再恢復
+                    setTimeout(finish, 500);
+                };
+            } else {
+                finish();
+            }
+        }
+
+        // --- 場景切換機制 (舊版，用於真正的場景變換) ---
+        function speakThenTransition(text, callback) {
+            isSystemSpeaking = true; 
+            const buttons = document.querySelectorAll('#interaction-area button');
+            buttons.forEach(btn => btn.disabled = true);
+
+            const utterance = speak(text, "", true);
+            
+            const finish = () => {
+                isSystemSpeaking = false;
+                callback(); 
+            };
+
+            if (utterance) {
+                utterance.onend = () => setTimeout(finish, 1500);
+                const timeout = Math.max(4000, text.length * 500);
+                setTimeout(() => { if (isSystemSpeaking) finish(); }, timeout);
+            } else {
+                finish();
+            }
+        }
+
+        // --- 虛擬焦點與閱讀邏輯 ---
+        function getReadableElements() {
+            const container = document.getElementById('main-content');
+            return Array.from(container.querySelectorAll('h1, h2, h3, h4, p, button, input, li, .readable'))
+                .filter(el => el.offsetParent !== null);
+        }
+
+        function moveVirtualFocus(direction) {
+            const elements = getReadableElements();
+            let currentElement = document.activeElement;
+            let index = elements.indexOf(currentElement);
+            if (index === -1) index = direction === 1 ? -1 : elements.length;
+            let nextIndex = index + direction;
+            if (nextIndex >= 0 && nextIndex < elements.length) {
+                const target = elements[nextIndex];
+                target.focus();
+                elements.forEach(el => el.classList.remove('virtual-focus'));
+                target.classList.add('virtual-focus');
+            }
+        }
+
+        function jumpToHeading() {
+            const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6'))
+                .filter(el => el.offsetParent !== null); 
+            if (headings.length === 0) return;
+            const current = document.activeElement;
+            const currentIndex = headings.indexOf(current);
+            let nextIndex = (currentIndex !== -1) ? (currentIndex + 1) % headings.length : 0;
+            if (currentIndex === -1) {
+                 for (let i = 0; i < headings.length; i++) {
+                    if (current.compareDocumentPosition(headings[i]) & Node.DOCUMENT_POSITION_FOLLOWING) {
+                        nextIndex = i; break;
+                    }
+                }
+            }
+            headings[nextIndex].focus();
+        }
+
+        // --- 事件監聽 ---
+        document.addEventListener('keydown', (e) => {
+            if(e.key === 'F9') { toggleBlindMode(); return; }
+            if(e.key === 'Control') { synth.cancel(); isSystemSpeaking = false; return; }
+            if(e.key === 'ArrowDown') { e.preventDefault(); moveVirtualFocus(1); }
+            if(e.key === 'ArrowUp') { e.preventDefault(); moveVirtualFocus(-1); }
+            if(e.key === 'h' || e.key === 'H') { e.preventDefault(); jumpToHeading(); }
+        });
+
+        document.addEventListener('focusin', (e) => {
+            if (isSystemSpeaking) return;
+            const target = e.target;
+            let text = target.getAttribute('aria-label') || target.innerText;
+            let role = "";
+            const tag = target.tagName;
+            if (tag === 'BUTTON') role = "按鈕";
+            if (tag === 'INPUT') role = "編輯區";
+            if (tag.startsWith('H')) role = `標題等級 ${tag.substring(1)}`;
+            if (tag === 'LI') role = "列表項目";
+            if (tag === 'INPUT' && target.value) { text = `編輯區, ${target.value}`; role = ""; }
+            if (text) speak(text, role, true); 
+        });
+
+        // --- 視覺與初始化 ---
+        const blindCurtain = document.getElementById('blind-curtain');
+        const startBtn = document.getElementById('start-btn');
+        const toggleVisualBtn = document.getElementById('toggle-visual-btn');
+        const gameContainer = document.getElementById('game-container');
+        const inventoryDisplay = document.getElementById('inventory-display');
+
+        function toggleBlindMode() {
+            gameState.isBlindMode = !gameState.isBlindMode;
+            if (gameState.isBlindMode) {
+                blindCurtain.style.display = 'block';
+            } else {
+                blindCurtain.style.display = 'none';
+                speak("全黑模式關閉。");
+            }
+        }
+
+        function updateInventoryDisplay() {
+            const invText = gameState.inventory.length > 0 ? gameState.inventory.join(", ") : "空";
+            inventoryDisplay.innerText = `背包物品: ${invText}`;
+        }
+
+        const sceneHeading = document.getElementById('scene-heading');
+        const sceneDesc = document.getElementById('scene-description');
+        const interactionArea = document.getElementById('interaction-area');
+
+        function updateScene(title, desc, buttons) {
+            sceneHeading.innerText = title;
+            sceneDesc.innerText = desc;
+            updateInventoryDisplay();
+
+            interactionArea.innerHTML = '';
+            buttons.forEach(btnData => {
+                const btn = document.createElement('button');
+                btn.className = "item-btn shadow-sm";
+                btn.innerText = btnData.text;
+                if (btnData.id) btn.id = btnData.id;
+                btn.onclick = (e) => { btnData.action(e); };
+                interactionArea.appendChild(btn);
+            });
+
+            setTimeout(() => { sceneHeading.focus(); }, 100);
+        }
+
+        // --- 場景 1: 房間中央 ---
+        function renderMainRoom() {
+            let desc = "你回到了房間中央。空氣潮濕，牆上有霉味。";
+            if(gameState.doorOpen) desc = "大門已經解鎖，感應燈亮起，出口就在眼前。";
+            const buttons = [
+                { text: "摸索老舊的書桌", action: renderDesk },
+                { text: "走到角落的木製書櫃", action: renderBookshelf },
+                { text: "檢查牆邊的單人床", action: renderBed },
+                { text: "蹲下摸索地板上的地毯", action: renderRug }, 
+                { text: "觸摸牆上的舊畫作", action: renderPainting }, 
+                { text: "前往電子保險箱", action: renderSafe },
+                { 
+                    id: "door-btn",
+                    text: gameState.doorOpen ? "感應磁卡走出大門 (離開遊戲)" : "檢查沉重的鐵門", 
+                    action: checkDoor 
+                }
+            ];
+            updateScene("房間中央", desc, buttons);
+        }
+
+        // --- 場景 2: 書桌 (應用局部更新) ---
+        function renderDesk() {
+            const drawerBtn = {
+                text: gameState.drawerOpen ? "檢查已打開的抽屜" : "嘗試打開抽屜",
+                action: (e) => {
+                    if (gameState.drawerOpen) {
+                         speak("抽屜裡空空的，東西都被拿走了。");
+                    } else if (gameState.hasRustyKey) {
+                        gameState.drawerOpen = true;
+                        gameState.hasBattery = true;
+                        gameState.inventory.push("3號電池");
+                        gameState.inventory = gameState.inventory.filter(i => i !== "生鏽的小鑰匙");
+                        
+                        // 修正：原地更新，不重新渲染
+                        handleInteractionInPlace(
+                            e, 
+                            "你將生鏽的小鑰匙插入鎖孔，用力轉動... 喀！抽屜開了。裡面滾出一顆電池。你獲得了：3號電池。",
+                            "檢查已打開的抽屜",
+                            updateInventoryDisplay
+                        );
+                    } else {
+                        speak("抽屜鎖住了。鎖孔看起來很小且生鏽了。");
+                    }
+                }
+            };
+
+            const radioBtn = {
+                text: gameState.radioFixed ? "播放收音機" : "檢查桌上的收音機",
+                action: (e) => {
+                    if (gameState.radioFixed) {
+                        const radioContent = "這裡是深夜廣播... 滋... 來自第 1 頻道的經典老歌... 滋... 現在時間是晚上 9 點整... 滋... 祝您好運。";
+                        speak(radioContent, "收音機廣播");
+                        gameState.codeKnown = true;
+                    } else {
+                        if (!gameState.radioUnscrewed) {
+                            if (gameState.hasScrewdriver) {
+                                gameState.radioUnscrewed = true;
+                                // 原地更新：拆螺絲
+                                handleInteractionInPlace(
+                                    e,
+                                    "你用螺絲起子轉開了背蓋的螺絲。背蓋打開了，但電池槽是空的。",
+                                    "檢查桌上的收音機 (背蓋已開)", 
+                                    null
+                                );
+                            } else {
+                                speak("收音機沒反應。你想換電池，但電池蓋被螺絲鎖死，徒手打不開。你需要找到螺絲起子。");
+                            }
+                        } 
+                        else {
+                            if (gameState.hasBattery) {
+                                gameState.radioFixed = true;
+                                gameState.inventory = gameState.inventory.filter(i => i !== "3號電池");
+                                // 修正：原地更新：裝電池
+                                handleInteractionInPlace(
+                                    e,
+                                    "你裝入電池。電源燈亮了！收音機發出沙沙聲。收音機已修好。",
+                                    "播放收音機",
+                                    updateInventoryDisplay
+                                );
+                            } else {
+                                speak("電池蓋已經打開了，但是裡面沒有電池。你需要找到電池裝進去。");
+                            }
+                        }
+                    }
+                }
+            };
+
+            const buttons = [drawerBtn, radioBtn, { text: "回到房間中央", action: renderMainRoom }];
+            updateScene("老舊的書桌", "你坐在書桌前。這裡有一台舊收音機，還有一個上鎖的抽屜。", buttons);
+        }
+
+        // --- 場景 3: 書櫃 ---
+        function renderBookshelf() {
+            let desc = "這是一個發霉的木製書櫃。";
+            if (gameState.diaryRead) desc += " 你讀過日記，記得工具藏在某個積灰塵的軟東西下。";
+            const buttons = [
+                {
+                    text: "摸索書櫃底層的日記本",
+                    action: () => {
+                        gameState.diaryRead = true;
+                        speak("你摸到一本破舊的日記。翻開寫著：『受夠了修理東西！那根長長的工具老是絆倒我。這次我把它藏在房間裡「唯一柔軟、卻總是佈滿灰塵」的東西下面。要是再找不到，我就要把收音機砸了！』", "閱讀內容");
+                    }
+                },
+                { text: "回到房間中央", action: renderMainRoom }
+            ];
+            updateScene("木製書櫃", desc, buttons);
+        }
+
+        // --- 場景 4: 單人床 (應用局部更新) ---
+        function renderBed() {
+            const buttons = [
+                {
+                    text: "撫摸床單表面", 
+                    action: () => speak("床單上有許多乾掉的汙漬，摸起來很粗糙，甚至有幾個破洞。沒有發現特別的東西。")
+                },
+                {
+                    text: "用力搖晃床架", 
+                    action: () => speak("鐵床架發出『嘰乖、嘰乖』的刺耳聲音，結構有點鬆動，但似乎沒有藏東西。")
+                },
+                {
+                    text: "拍打枕頭", 
+                    action: (e) => {
+                        if (gameState.hasRustyKey || gameState.drawerOpen) {
+                            speak("枕頭軟軟的，裡面已經沒有東西了。");
+                        } else {
+                            gameState.hasRustyKey = true;
+                            gameState.inventory.push("生鏽的小鑰匙");
+                            // 修正：原地更新
+                            handleInteractionInPlace(
+                                e,
+                                "你摸到枕頭套裡有個硬硬的小東西... 是一把生鏽的小鑰匙！你獲得了：生鏽的小鑰匙。",
+                                "拍打枕頭",
+                                updateInventoryDisplay
+                            );
+                        }
+                    }
+                },
+                { text: "回到房間中央", action: renderMainRoom }
+            ];
+            updateScene("單人床", "一張簡陋的鐵架床，散發出淡淡的霉味。", buttons);
+        }
+
+        // --- 場景 5: 地毯 (應用局部更新) ---
+        function renderRug() {
+            const buttons = [
+                {
+                    text: "用腳踩踏地毯",
+                    action: () => speak("你用力踩了踩地毯中心。噗！揚起了一陣灰塵，讓你忍不住咳嗽了幾聲。這裡似乎什麼都沒有。")
+                },
+                {
+                    text: "觸摸地毯邊緣",
+                    action: () => speak("地毯邊緣的纖維已經脫落，摸起來刺刺的。")
+                },
+                {
+                    text: "掀開地毯", 
+                    action: (e) => {
+                        if (gameState.hasScrewdriver || gameState.radioUnscrewed) {
+                            speak("地毯下面只有灰塵。");
+                        } else {
+                            gameState.hasScrewdriver = true;
+                            gameState.inventory.push("螺絲起子");
+                            // 修正：原地更新
+                            handleInteractionInPlace(
+                                e,
+                                "你在地毯下摸到一根長長的工具... 是螺絲起子！你獲得了：螺絲起子。",
+                                "掀開地毯",
+                                updateInventoryDisplay
+                            );
+                        }
+                    }
+                },
+                { text: "回到房間中央", action: renderMainRoom }
+            ];
+            updateScene("破舊的地毯", "一塊踩起來黏黏的地毯，邊緣有些翹起。", buttons);
+        }
+
+        // --- 場景 6: 畫作 ---
+        function renderPainting() {
+            gameState.paintingExamined = true;
+            const buttons = [
+                { text: "觸摸畫框", action: () => speak("這是一個粗糙的木頭畫框。") },
+                { text: "摸索畫作右下角的銘牌", action: () => speak("你摸到畫框右下角有兩個脫落的金屬數字。摸起來形狀像是... 8... 還有... 5...。只能摸到這兩個數字。", "關鍵線索") },
+                { text: "回到房間中央", action: renderMainRoom }
+            ];
+            updateScene("牆上的舊畫作", "一幅掛在牆上的畫，畫布摸起來很粗糙。右下角似乎有東西。", buttons);
+        }
+
+        // --- 場景 7: 保險箱 (修正：刪除多餘提示，新增錯誤語音) ---
+        function renderSafe() {
+            if (gameState.safeUnlocked) {
+                updateScene("電子保險箱", "保險箱門開著，裡面已經空了。", [
+                    { text: "回到房間中央", action: renderMainRoom }
+                ]);
+                return;
+            }
+
+            sceneHeading.innerText = "電子保險箱";
+            sceneDesc.innerText = "這是一個需要4位數密碼的保險箱。";
+            updateInventoryDisplay();
+            interactionArea.innerHTML = '';
+
+            const div = document.createElement('div');
+            div.className = "mb-4";
+            
+            const label = document.createElement('label');
+            label.innerText = "輸入密碼:";
+            label.className = "block font-bold mb-1";
+            
+            const input = document.createElement('input');
+            input.type = "text";
+            input.className = "border p-2 w-full rounded";
+            input.placeholder = "請在此輸入數字";
+            input.setAttribute("aria-label", "密碼輸入框，請輸入4位數字");
+            
+            div.appendChild(label);
+            div.appendChild(input);
+            interactionArea.appendChild(div);
+
+            const submitBtn = document.createElement('button');
+            submitBtn.className = "item-btn bg-blue-50 text-white";
+            submitBtn.innerText = "確認輸入";
+            submitBtn.onclick = () => {
+                if(input.value === "1985") {
+                    gameState.safeUnlocked = true;
+                    gameState.hasKeycard = true;
+                    gameState.inventory.push("大門磁卡");
+                    speakThenTransition(
+                        "密碼正確！嗶一聲，保險箱彈開了。你摸到一張平滑的塑膠卡片。你獲得了：大門磁卡。",
+                        renderMainRoom
+                    );
+                } else {
+                    // 修正：語音提示密碼錯誤
+                    speak("密碼錯誤。請重新輸入。", "錯誤音效");
+                    input.value = "";
+                    input.focus();
+                }
+            };
+            interactionArea.appendChild(submitBtn);
+
+            const backBtn = document.createElement('button');
+            backBtn.className = "item-btn";
+            backBtn.innerText = "回到房間中央";
+            backBtn.onclick = renderMainRoom;
+            interactionArea.appendChild(backBtn);
+            
+            // 修正：不播放「請按 Tab...」的提示，也不自動聚焦 input
+            // 讓使用者根據 H1 標題和標準導航自行探索
+        }
+
+        // --- 場景 8: 大門邏輯 ---
+        function checkDoor(e) {
+            const btn = e ? e.target : null;
+            if (gameState.doorOpen) {
+                speakThenTransition(
+                    "恭喜！你成功逃出了密室！",
+                    () => {
+                        alert("恭喜通關！");
+                        location.reload();
+                    }
+                );
+            } else {
+                if (gameState.hasKeycard) {
+                    gameState.doorOpen = true;
+                    // 原地更新
+                    handleInteractionInPlace(
+                        e,
+                        "你將磁卡靠近感應區。嗶！電子鎖解開了。門自動彈開。請再按一次 Enter 走出大門。",
+                        "感應磁卡走出大門 (離開遊戲)",
+                        null
+                    );
+                } else {
+                    speak("門鎖住了。這是一個電子鎖，沒有鑰匙孔，只有一個感應區。你需要一張磁卡。", "提示");
+                }
+            }
+        }
+
+        // --- 初始化 (修復開場語音) ---
+        startBtn.addEventListener('click', () => {
+            document.getElementById('status-log').classList.remove('hidden');
+            gameContainer.classList.remove('hidden');
+            const instructions = document.getElementById('instructions');
+            if(instructions) instructions.classList.add('hidden');
+            startBtn.parentElement.classList.add('hidden');
+            
+            blindCurtain.style.display = 'block';
+            gameState.isBlindMode = true;
+            
+            // 1. 先渲染場景
+            renderMainRoom();
+            
+            // 2. 延遲播放口述影像，避免被 renderMainRoom 的初始焦點語音切斷
+            // 鎖定狀態
+            isSystemSpeaking = true;
+            
+            setTimeout(() => {
+                const introText = "口述影像：場景是一個陰暗潮濕的地下室。水泥牆壁上佈滿了青苔與水漬。房間中央有一張老舊的木製書桌，旁邊是一張生鏽的單人床。角落裡有一個發霉的木製書櫃。地板上鋪著一塊破舊的地毯。牆上掛著一幅模糊不清的舊畫作。出口是一扇緊閉的沉重鐵門，門邊有一個發著微光的電子密碼鎖。現在，燈光突然熄滅，你陷入了完全的黑暗之中。請依靠聽覺與觸覺逃離這裡。";
+                
+                const utterance = speak(introText, "開場場景描述", true);
+                
+                if (utterance) {
+                    utterance.onend = () => {
+                        // 口述影像結束後，再給一個操作提示
+                        setTimeout(() => {
+                            isSystemSpeaking = false;
+                            speak("遊戲開始。請按 H 鍵聽取標題，或按 Tab 鍵探索物品。", "系統提示");
+                        }, 500);
+                    };
+                } else {
+                    isSystemSpeaking = false;
+                }
+            }, 500); // 等待 500ms 讓初始的 H2 focus 語音先跑完或被蓋過
+        });
+
+        toggleVisualBtn.addEventListener('click', toggleBlindMode);
+        blindCurtain.addEventListener('click', (e) => {
+            e.stopPropagation();
+            speak("請使用鍵盤操作。");
+        });
+
+    </script>
+</body>
+</html>
