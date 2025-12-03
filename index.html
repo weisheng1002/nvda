@@ -52,22 +52,29 @@
             transition: all 0.2s;
         }
 
-        /* 停用狀態樣式 */
-        .item-btn:disabled {
-            background-color: #e0e0e0;
-            color: #999;
-            cursor: not-allowed;
-            border-color: #ddd;
-        }
-
-        .item-btn:not(:disabled):hover {
+        .item-btn:hover {
             background-color: #e6e6e6;
+        }
+        
+        /* 處理中狀態 (防止連點但保持焦點) */
+        .item-btn[data-processing="true"] {
+            opacity: 0.7;
+            cursor: wait;
         }
 
         /* 讓所有文字在被閱讀游標選中時有視覺回饋 (給老師看) */
         .virtual-focus {
             outline: 2px dashed red;
             background-color: #ffe4e1;
+        }
+        
+        /* 結局動畫 */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fade-in {
+            animation: fadeIn 1.5s ease-out forwards;
         }
     </style>
 </head>
@@ -166,6 +173,7 @@
         }
 
         function speak(text, role = "", interrupt = true) {
+            // 保護 Intro 和 場景切換語音
             if (isSystemSpeaking && !interrupt) return;
             if (interrupt) synth.cancel();
 
@@ -186,35 +194,31 @@
             return utterance;
         }
 
-        // --- 關鍵修正：原地更新按鈕狀態，不跳轉場景 ---
+        // --- 原地更新按鈕狀態 (不鎖定語音，不移除焦點) ---
         function handleInteractionInPlace(event, speechText, newButtonText, callback) {
             const btn = event.target;
             if(!btn) return;
+            
+            // 防止連點，但不要用 disabled (會導致焦點遺失)
+            if (btn.dataset.processing === "true") return;
+            btn.dataset.processing = "true";
 
-            // 1. 鎖定按鈕，避免連點
-            btn.disabled = true;
-            isSystemSpeaking = true;
-
-            // 2. 播放語音
+            // 這裡不再設置 isSystemSpeaking = true，允許玩家移動游標插播
             const utterance = speak(speechText, "", true);
 
             const finish = () => {
-                isSystemSpeaking = false;
-                // 3. 更新按鈕文字
                 if(newButtonText) {
                     btn.innerText = newButtonText;
                 }
-                // 4. 解鎖並保持焦點
-                btn.disabled = false;
+                btn.dataset.processing = "false";
+                // 確保焦點還在
                 btn.focus();
                 
-                // 執行額外邏輯 (如更新背包顯示)
                 if(callback) callback();
             };
 
             if (utterance) {
                 utterance.onend = () => {
-                    // 語音講完後稍作停頓再恢復
                     setTimeout(finish, 500);
                 };
             } else {
@@ -222,9 +226,10 @@
             }
         }
 
-        // --- 場景切換機制 (舊版，用於真正的場景變換) ---
+        // --- 場景切換機制 ---
         function speakThenTransition(text, callback) {
             isSystemSpeaking = true; 
+            // 這裡可以停用按鈕，因為畫面即將重繪，焦點會變
             const buttons = document.querySelectorAll('#interaction-area button');
             buttons.forEach(btn => btn.disabled = true);
 
@@ -237,6 +242,7 @@
 
             if (utterance) {
                 utterance.onend = () => setTimeout(finish, 1500);
+                // 安全機制
                 const timeout = Math.max(4000, text.length * 500);
                 setTimeout(() => { if (isSystemSpeaking) finish(); }, timeout);
             } else {
@@ -292,7 +298,9 @@
         });
 
         document.addEventListener('focusin', (e) => {
+            // 只在 Intro 或 場景切換時 阻止焦點語音
             if (isSystemSpeaking) return;
+            
             const target = e.target;
             let text = target.getAttribute('aria-label') || target.innerText;
             let role = "";
@@ -313,6 +321,12 @@
         const inventoryDisplay = document.getElementById('inventory-display');
 
         function toggleBlindMode() {
+            // 修正：強制解除鎖定，避免開場語音沒講完按F9導致後續無聲
+            if (isSystemSpeaking) {
+                synth.cancel();
+                isSystemSpeaking = false;
+            }
+
             gameState.isBlindMode = !gameState.isBlindMode;
             if (gameState.isBlindMode) {
                 blindCurtain.style.display = 'block';
@@ -349,6 +363,70 @@
             setTimeout(() => { sceneHeading.focus(); }, 100);
         }
 
+        // --- 場景 9: 結局畫面 (修正：簡短結尾) ---
+        function renderEnding() {
+            blindCurtain.style.display = 'none';
+            gameState.isBlindMode = false;
+
+            const container = document.getElementById('game-container');
+            container.innerHTML = '';
+            container.className = "flex flex-col items-center justify-center min-h-[50vh] text-center px-4"; 
+
+            const endingContent = document.createElement('div');
+            endingContent.className = "max-w-2xl w-full bg-white p-8 rounded-xl shadow-2xl border-4 border-yellow-400 animate-fade-in";
+
+            const svgImage = `
+                <div class="mb-6 mx-auto w-full max-w-sm" role="img" aria-label="插圖：一扇敞開的大門，門外是藍天白雲與綠地，象徵自由與光明">
+                    <svg viewBox="0 0 400 300" xmlns="http://www.w3.org/2000/svg" class="w-full h-auto shadow-md rounded">
+                        <defs>
+                            <linearGradient id="sky" x1="0%" y1="0%" x2="0%" y2="100%">
+                                <stop offset="0%" style="stop-color:#87CEEB;stop-opacity:1" />
+                                <stop offset="100%" style="stop-color:#E0F7FA;stop-opacity:1" />
+                            </linearGradient>
+                            <linearGradient id="grass" x1="0%" y1="0%" x2="0%" y2="100%">
+                                <stop offset="0%" style="stop-color:#4CAF50;stop-opacity:1" />
+                                <stop offset="100%" style="stop-color:#2E7D32;stop-opacity:1" />
+                            </linearGradient>
+                        </defs>
+                        <rect width="400" height="300" fill="#2c3e50" />
+                        <rect x="120" y="50" width="160" height="250" fill="url(#sky)" />
+                        <rect x="120" y="220" width="160" height="80" fill="url(#grass)" />
+                        <circle cx="250" cy="80" r="25" fill="#FFD700" opacity="0.9" />
+                        <rect x="110" y="40" width="180" height="270" fill="none" stroke="#5D4037" stroke-width="10" />
+                        <path d="M120 50 L80 40 L80 310 L120 300 Z" fill="#795548" stroke="#3E2723" stroke-width="2" />
+                        <circle cx="90" cy="180" r="5" fill="#FFD700" />
+                    </svg>
+                </div>
+            `;
+
+            // 修正：文字與語音完全一致
+            const heading = `<h2 id="ending-title" class="text-4xl font-bold mb-4 text-green-700" tabindex="-1">恭喜逃脫！</h2>`;
+            const message = `
+                <p id="ending-msg" class="readable text-xl text-gray-700 mb-8 leading-relaxed" tabindex="0">
+                    恭喜逃脫！感謝您的遊玩。
+                </p>
+            `;
+
+            const restartBtn = document.createElement('button');
+            restartBtn.className = "bg-green-600 text-white px-8 py-3 rounded-full text-xl font-bold hover:bg-green-700 transition shadow-lg transform hover:scale-105 focus:outline-none focus:ring-4 focus:ring-green-300";
+            restartBtn.innerText = "重新開始遊戲";
+            restartBtn.onclick = () => location.reload();
+
+            endingContent.innerHTML = svgImage + heading + message;
+            endingContent.appendChild(restartBtn);
+            container.appendChild(endingContent);
+
+            // 修正：語音文字一致
+            const endingText = "恭喜逃脫！感謝您的遊玩。";
+            
+            isSystemSpeaking = false;
+            
+            setTimeout(() => {
+                speak(endingText, "系統訊息");
+                document.getElementById('ending-title').focus();
+            }, 500);
+        }
+
         // --- 場景 1: 房間中央 ---
         function renderMainRoom() {
             let desc = "你回到了房間中央。空氣潮濕，牆上有霉味。";
@@ -369,7 +447,7 @@
             updateScene("房間中央", desc, buttons);
         }
 
-        // --- 場景 2: 書桌 (應用局部更新) ---
+        // --- 場景 2: 書桌 ---
         function renderDesk() {
             const drawerBtn = {
                 text: gameState.drawerOpen ? "檢查已打開的抽屜" : "嘗試打開抽屜",
@@ -382,7 +460,6 @@
                         gameState.inventory.push("3號電池");
                         gameState.inventory = gameState.inventory.filter(i => i !== "生鏽的小鑰匙");
                         
-                        // 修正：原地更新，不重新渲染
                         handleInteractionInPlace(
                             e, 
                             "你將生鏽的小鑰匙插入鎖孔，用力轉動... 喀！抽屜開了。裡面滾出一顆電池。你獲得了：3號電池。",
@@ -406,7 +483,6 @@
                         if (!gameState.radioUnscrewed) {
                             if (gameState.hasScrewdriver) {
                                 gameState.radioUnscrewed = true;
-                                // 原地更新：拆螺絲
                                 handleInteractionInPlace(
                                     e,
                                     "你用螺絲起子轉開了背蓋的螺絲。背蓋打開了，但電池槽是空的。",
@@ -421,7 +497,6 @@
                             if (gameState.hasBattery) {
                                 gameState.radioFixed = true;
                                 gameState.inventory = gameState.inventory.filter(i => i !== "3號電池");
-                                // 修正：原地更新：裝電池
                                 handleInteractionInPlace(
                                     e,
                                     "你裝入電池。電源燈亮了！收音機發出沙沙聲。收音機已修好。",
@@ -457,7 +532,7 @@
             updateScene("木製書櫃", desc, buttons);
         }
 
-        // --- 場景 4: 單人床 (應用局部更新) ---
+        // --- 場景 4: 單人床 ---
         function renderBed() {
             const buttons = [
                 {
@@ -476,11 +551,10 @@
                         } else {
                             gameState.hasRustyKey = true;
                             gameState.inventory.push("生鏽的小鑰匙");
-                            // 修正：原地更新
                             handleInteractionInPlace(
                                 e,
                                 "你摸到枕頭套裡有個硬硬的小東西... 是一把生鏽的小鑰匙！你獲得了：生鏽的小鑰匙。",
-                                "拍打枕頭",
+                                "拍打枕頭 (已無物品)",
                                 updateInventoryDisplay
                             );
                         }
@@ -491,7 +565,7 @@
             updateScene("單人床", "一張簡陋的鐵架床，散發出淡淡的霉味。", buttons);
         }
 
-        // --- 場景 5: 地毯 (應用局部更新) ---
+        // --- 場景 5: 地毯 ---
         function renderRug() {
             const buttons = [
                 {
@@ -510,11 +584,10 @@
                         } else {
                             gameState.hasScrewdriver = true;
                             gameState.inventory.push("螺絲起子");
-                            // 修正：原地更新
                             handleInteractionInPlace(
                                 e,
                                 "你在地毯下摸到一根長長的工具... 是螺絲起子！你獲得了：螺絲起子。",
-                                "掀開地毯",
+                                "掀開地毯 (已無物品)",
                                 updateInventoryDisplay
                             );
                         }
@@ -536,7 +609,7 @@
             updateScene("牆上的舊畫作", "一幅掛在牆上的畫，畫布摸起來很粗糙。右下角似乎有東西。", buttons);
         }
 
-        // --- 場景 7: 保險箱 (修正：刪除多餘提示，新增錯誤語音) ---
+        // --- 場景 7: 保險箱 ---
         function renderSafe() {
             if (gameState.safeUnlocked) {
                 updateScene("電子保險箱", "保險箱門開著，裡面已經空了。", [
@@ -570,17 +643,22 @@
             const submitBtn = document.createElement('button');
             submitBtn.className = "item-btn bg-blue-50 text-white";
             submitBtn.innerText = "確認輸入";
-            submitBtn.onclick = () => {
+            submitBtn.onclick = (e) => {
                 if(input.value === "1985") {
                     gameState.safeUnlocked = true;
                     gameState.hasKeycard = true;
                     gameState.inventory.push("大門磁卡");
-                    speakThenTransition(
+                    
+                    handleInteractionInPlace(
+                        e,
                         "密碼正確！嗶一聲，保險箱彈開了。你摸到一張平滑的塑膠卡片。你獲得了：大門磁卡。",
-                        renderMainRoom
+                        "密碼正確 (已解鎖)",
+                        () => {
+                            updateInventoryDisplay();
+                            input.disabled = true; // 鎖定輸入框
+                        }
                     );
                 } else {
-                    // 修正：語音提示密碼錯誤
                     speak("密碼錯誤。請重新輸入。", "錯誤音效");
                     input.value = "";
                     input.focus();
@@ -593,9 +671,6 @@
             backBtn.innerText = "回到房間中央";
             backBtn.onclick = renderMainRoom;
             interactionArea.appendChild(backBtn);
-            
-            // 修正：不播放「請按 Tab...」的提示，也不自動聚焦 input
-            // 讓使用者根據 H1 標題和標準導航自行探索
         }
 
         // --- 場景 8: 大門邏輯 ---
@@ -603,16 +678,12 @@
             const btn = e ? e.target : null;
             if (gameState.doorOpen) {
                 speakThenTransition(
-                    "恭喜！你成功逃出了密室！",
-                    () => {
-                        alert("恭喜通關！");
-                        location.reload();
-                    }
+                    "恭喜！你成功逃出了密室！感受到久違的陽光灑在臉上。",
+                    renderEnding 
                 );
             } else {
                 if (gameState.hasKeycard) {
                     gameState.doorOpen = true;
-                    // 原地更新
                     handleInteractionInPlace(
                         e,
                         "你將磁卡靠近感應區。嗶！電子鎖解開了。門自動彈開。請再按一次 Enter 走出大門。",
@@ -625,7 +696,7 @@
             }
         }
 
-        // --- 初始化 (修復開場語音) ---
+        // --- 初始化 ---
         startBtn.addEventListener('click', () => {
             document.getElementById('status-log').classList.remove('hidden');
             gameContainer.classList.remove('hidden');
@@ -639,8 +710,7 @@
             // 1. 先渲染場景
             renderMainRoom();
             
-            // 2. 延遲播放口述影像，避免被 renderMainRoom 的初始焦點語音切斷
-            // 鎖定狀態
+            // 2. 延遲播放口述影像
             isSystemSpeaking = true;
             
             setTimeout(() => {
@@ -650,7 +720,6 @@
                 
                 if (utterance) {
                     utterance.onend = () => {
-                        // 口述影像結束後，再給一個操作提示
                         setTimeout(() => {
                             isSystemSpeaking = false;
                             speak("遊戲開始。請按 H 鍵聽取標題，或按 Tab 鍵探索物品。", "系統提示");
@@ -659,7 +728,12 @@
                 } else {
                     isSystemSpeaking = false;
                 }
-            }, 500); // 等待 500ms 讓初始的 H2 focus 語音先跑完或被蓋過
+                
+                setTimeout(() => {
+                    if(isSystemSpeaking) isSystemSpeaking = false;
+                }, 15000);
+
+            }, 500); 
         });
 
         toggleVisualBtn.addEventListener('click', toggleBlindMode);
