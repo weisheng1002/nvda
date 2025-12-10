@@ -144,6 +144,7 @@
                 <ul class="list-disc pl-5 space-y-1">
                     <li><strong>Tab</strong>：依序移動到下一個按鈕。</li>
                     <li><strong>方向鍵 (上下左右)</strong>：依照實際方位移動遊標。</li>
+                    <li><strong>G</strong>：跳轉至圖片 (Next Graphic)。</li>
                     <li><strong>Enter</strong>：執行/確認。</li>
                     <li><strong>H</strong>：在標題間循環跳轉。</li>
                     <li><strong>F9</strong>：開關視覺 (全黑模式)。</li>
@@ -174,12 +175,10 @@
             
             <div id="scene-img-container" class="scene-image-container" aria-hidden="true">
                 <div class="loading-spinner"></div>
-                <img id="scene-img" src="" alt="場景示意圖" class="scene-image">
+                <img id="scene-img" src="" alt="場景示意圖" class="scene-image" tabindex="0">
             </div>
 
-            <div id="scene-description" class="readable mb-4 text-lg p-3 bg-gray-800 rounded shadow-sm border-l-4 border-purple-500" tabindex="-1">
-                你站在深夜的神社境內，雨水打在石板路上。四周一片漆黑，只能依賴聽覺和觸覺。
-            </div>
+            <!-- 原本的 #scene-description 文字區塊已刪除，視覺上只保留標題、圖片與互動區 -->
 
             <h3 class="font-bold text-md text-gray-400 mb-1" tabindex="-1">背包狀態</h3>
             <div id="inventory-display" class="readable mb-6 text-sm text-gray-300 p-2 bg-gray-900 rounded border border-gray-700" tabindex="-1">
@@ -208,7 +207,6 @@
         let reverbNode = null;
         let rainNodes = [];
 
-        // 記錄目前場景是否為 Grid 模式，用於切換導航邏輯
         let currentLayoutMode = 'list'; 
 
         const gameState = {
@@ -229,6 +227,19 @@
             rug: "old rotten tatami floor mats japanese temple close up texture detail worn out dark ambient",
             painting: "ancient stone tablet japanese shrine sakura flower carving mossy weathered night rain close up",
             safe: "antique japanese karakuri puzzle box wooden intricate mechanism glowing mysterious 8k"
+        };
+
+        const sceneImageAlts = {
+            main: "圖片：深夜的日式神社，巨大的紅色鳥居聳立在雨中，地面是濕漉漉的石板路，氣氛陰森。",
+            mainOpen: "圖片：清晨的神社，陽光穿透鳥居灑落，金色的光芒驅散了黑暗，充滿希望的景象。",
+            desk: "圖片：老舊的木製社務所櫃檯，木紋斑駁，旁邊有一座長滿青苔的石燈籠，光線昏暗。",
+            deskLit: "圖片：社務所旁的石燈籠被點亮了，溫暖的燭光透過燈籠窗格照亮了周圍的木紋。",
+            bookshelf: "圖片：一個掛滿繪馬的木架，旁邊掛著一把斷了弦的三味線，在雨中顯得淒涼。",
+            bed: "圖片：樹下的一張參拜者休息長椅，木頭已經腐朽，而且明顯少了一隻腳。",
+            rug: "圖片：本殿內部的地板，鋪著發霉破舊的塌塌米，編織的藺草已經散開。",
+            painting: "圖片：角落裡的一塊古老石碑，表面長滿青苔，隱約可以看出上面有雕刻。",
+            // 修正機關木盒的描述，更新為「看似需要某種密碼才能解開機關」
+            safe: "圖片：一個做工精細的寄木細工風格木盒，表面佈滿複雜的幾何紋路，看似需要某種密碼才能解開機關。"
         };
 
         // ==============================================
@@ -266,7 +277,6 @@
             const zhVoice = voices.find(v => v.lang === 'zh-TW') || voices.find(v => v.lang.includes('zh'));
             if (zhVoice) utterance.voice = zhVoice;
             
-            // 語音音量 1.0 (大聲)
             utterance.volume = 1.0; 
             utterance.rate = 1.3; 
             
@@ -525,20 +535,24 @@
 
         function updateScene(title, desc, buttons, promptKey, layoutType = 'list') {
             const sceneHeading = document.getElementById('scene-heading');
-            const sceneDesc = document.getElementById('scene-description');
+            // 已移除 sceneDesc 變數
             const interactionArea = document.getElementById('interaction-area');
             const sceneImg = document.getElementById('scene-img');
             
             currentLayoutMode = layoutType;
 
             sceneHeading.innerText = title;
-            sceneDesc.innerText = desc;
+            // 已移除 sceneDesc.innerText = desc;
             updateInventoryDisplay();
             
             sceneImg.classList.remove('visible'); 
             if (promptKey && scenePrompts[promptKey]) {
                 const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(scenePrompts[promptKey])}?width=800&height=350&nologo=true&seed=${promptKey.length*123}`;
                 sceneImg.src = url;
+                // 設定圖片 Alt 屬性與 TabIndex
+                sceneImg.alt = sceneImageAlts[promptKey] || "場景示意圖片";
+                sceneImg.tabIndex = 0; 
+
                 sceneImg.onload = () => sceneImg.classList.add('visible');
                 sceneImg.onerror = () => sceneImg.src = '';
             }
@@ -576,7 +590,7 @@
             container.innerHTML = '';
             container.className = "flex flex-col items-center justify-center min-h-[50vh] text-center px-4"; 
             
-            let prompt = "", title = "", msg = "", voice = "", styleClass = "";
+            let prompt = "", title = "", msg = "", voice = "", styleClass = "", imgAlt = "";
 
             if (type === 'bad') {
                 sfx.error();
@@ -585,6 +599,7 @@
                 voice = msg;
                 prompt = "dark scary japanese ghost spirit demon face horror nightmare 8k";
                 styleClass = "border-red-600 text-red-800";
+                imgAlt = "圖片：一張恐怖的惡靈面孔在黑暗中浮現，象徵悲慘的結局。";
             } else if (type === 'true') {
                 sfx.success();
                 title = "完美逃脫：神隱歸還";
@@ -592,6 +607,7 @@
                 voice = msg;
                 prompt = "beautiful japanese cherry blossom falling sakura shrine peaceful sunlight fantasy 8k";
                 styleClass = "border-pink-400 text-pink-800";
+                imgAlt = "圖片：美麗的櫻花飄落在充滿陽光的神社，象徵完美的結局。";
             } else {
                 sfx.success();
                 title = "恭喜逃脫！";
@@ -599,6 +615,7 @@
                 voice = msg;
                 prompt = "japanese shrine torii gate sunrise morning light glowing magical particles hope cinematic 8k";
                 styleClass = "border-yellow-400 text-gray-800";
+                imgAlt = "圖片：日出時分的鳥居，充滿希望的光芒，象徵成功逃脫。";
             }
 
             const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=800&height=350&nologo=true&seed=${type.length}`;
@@ -606,7 +623,7 @@
             const content = `
                 <div class="max-w-2xl w-full bg-white p-8 rounded-xl shadow-2xl border-4 ${styleClass} animate-fade-in">
                     <div class="scene-image-container mb-6 mx-auto w-full shadow-lg rounded overflow-hidden border-2 border-gray-800">
-                        <img src="${url}" class="w-full h-full object-cover visible">
+                        <img src="${url}" class="w-full h-full object-cover visible" alt="${imgAlt}" tabindex="0">
                     </div>
                     <h2 id="ending-title" class="text-4xl font-bold mb-4" tabindex="-1">${title}</h2>
                     <p class="readable text-xl mb-8 leading-relaxed" tabindex="0">${msg}</p>
@@ -771,10 +788,13 @@
             const imgEl = document.getElementById('scene-img');
             if(imgEl && scenePrompts[promptKey]) {
                 imgEl.src = `https://image.pollinations.ai/prompt/${encodeURIComponent(scenePrompts[promptKey])}?width=800&height=350&nologo=true&seed=${promptKey.length*123}`;
+                // Fix: Update Alt text manually here since we are not using updateScene for image
+                imgEl.alt = sceneImageAlts[promptKey] || "機關木盒圖片"; 
+                imgEl.tabIndex = 0;
             }
             
             document.getElementById('scene-heading').innerText = "機關木盒";
-            document.getElementById('scene-description').innerText = "放在賽錢箱旁的精緻木盒，有四個轉盤鎖。";
+            // 已移除文字設定
             updateInventoryDisplay();
             
             const interactionArea = document.getElementById('interaction-area');
@@ -853,9 +873,36 @@
             sfx.click();
         }
         
+        // 圖片導航邏輯 (G / Shift+G)
+        function jumpToImage(shiftKey) {
+            const images = Array.from(document.querySelectorAll('img')).filter(el => el.offsetParent !== null); // 只抓可見圖片
+            if (images.length === 0) return;
+
+            const current = document.activeElement;
+            const currentIndex = images.indexOf(current);
+            let nextIndex = 0;
+
+            if (currentIndex !== -1) {
+                if (shiftKey) {
+                    // Previous Graphic
+                    nextIndex = currentIndex - 1;
+                    if (nextIndex < 0) nextIndex = images.length - 1;
+                } else {
+                    // Next Graphic
+                    nextIndex = (currentIndex + 1) % images.length;
+                }
+            } else {
+                // 如果目前沒有聚焦在圖片上，G 跳第一張，Shift+G 跳最後一張
+                nextIndex = shiftKey ? images.length - 1 : 0;
+            }
+            
+            images[nextIndex].focus();
+            sfx.click();
+        }
+        
         // 獲取所有可導航元素 (包含文字)
         function getVirtualItems() {
-            return Array.from(document.querySelectorAll('#main-content h1, #main-content h2, #main-content h3, #main-content .readable, #main-content button:not([disabled]), #main-content input:not([disabled])'))
+            return Array.from(document.querySelectorAll('#main-content h1, #main-content h2, #main-content h3, #main-content .readable, #main-content button:not([disabled]), #main-content input:not([disabled]), #main-content img[tabindex]'))
                 .filter(el => el.offsetParent !== null);
         }
 
@@ -873,17 +920,6 @@
                 let handled = false;
 
                 // Grid 映射:
-                // 0: Painting (Left Top) | 1: Desk (Center Top) | 2: Safe (Right Top) -> Note: Safe is here in array order?
-                // The buttons array in renderMainRoom was:
-                // 0: Painting, 1: Desk, 2: Safe (Row 1)
-                // 3: Bookshelf, 4: Rug, 5: Bed (Row 2)  <-- Wait, array order in code was:
-                // Painting(0), Desk(1), Safe(2), Ema(3), Rug(4), Bed(5), Door(6)
-                // Let's verify array push order in renderMainRoom:
-                // Painting(0), Desk(1), Safe(2)
-                // Bookshelf(3), Rug(4), Bed(5)
-                // Door(6)
-                
-                // Direction Logic
                 switch (direction) {
                     case 37: // Left
                         if (btnIndex === 1) nextBtnIndex = 0;
@@ -974,7 +1010,7 @@
                         const u = speak(intro, "開場", true);
                         if(u) {
                             u.onend = () => {
-                                const start = "遊戲開始。請按 H 鍵聽取標題，或按 Tab與方向鍵探索物品並按Enter確認執行。";
+                                const start = "遊戲開始。請按 H 鍵聽取標題，或按 G 鍵聽取場景圖片，Tab與方向鍵探索物品，Enter確認執行。";
                                 const u2 = speak(start, "提示", true);
                                 if(u2) u2.onend = () => isSystemSpeaking = false;
                                 else isSystemSpeaking = false;
@@ -987,7 +1023,14 @@
             }
 
             if(toggleVisualBtn) toggleVisualBtn.addEventListener('click', toggleBlindMode);
-            if(blindCurtain) blindCurtain.addEventListener('click', () => speak("請使用鍵盤操作。"));
+            
+            if(blindCurtain) {
+                blindCurtain.addEventListener('click', (e) => {
+                    // 如果系統正在進行重要旁白（如開場），忽略點擊，避免語音被打斷
+                    if (isSystemSpeaking) return;
+                    speak("請使用鍵盤操作。", "系統提示");
+                });
+            }
         });
 
         // 事件監聽：鍵盤
@@ -1017,6 +1060,7 @@
 
             if(e.key === 'Control') { if(synth) synth.cancel(); return; }
             if(e.key === 'h' || e.key === 'H') { e.preventDefault(); jumpToHeading(); }
+            if(e.key === 'g' || e.key === 'G') { e.preventDefault(); jumpToImage(e.shiftKey); }
         });
 
         // 事件監聽：焦點
@@ -1024,6 +1068,9 @@
             if (isSystemSpeaking) return;
             let text = e.target.getAttribute('aria-label') || e.target.innerText;
             if (e.target.tagName === 'INPUT' && e.target.value) text = `編輯區, ${e.target.value}`;
+            // 新增圖片語音邏輯
+            if (e.target.tagName === 'IMG') text = e.target.alt || "圖片";
+            
             speak(text, e.target.tagName === 'BUTTON' ? '按鈕' : '', true);
         });
 
