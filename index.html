@@ -644,7 +644,7 @@
         // 5. 場景邏輯
         // ==============================================
 
-        function renderMainRoom() {
+        function renderMainRoom(e) {
             let desc = "你站在深夜的神社境內，雨水打在石板路上。四周一片漆黑，只能依賴聽覺和觸覺。";
             let promptKey = "main";
             if(gameState.doorOpen) {
@@ -665,6 +665,19 @@
             ];
             
             updateScene("神社境內", desc, buttons, promptKey, 'grid');
+
+            // 如果是從子場景返回（e 存在），將焦點強制設在中間的塌塌米，方便四周探索
+            if(e) {
+                setTimeout(() => {
+                    const btns = document.querySelectorAll('#interaction-area button');
+                    for(let btn of btns) {
+                        if(btn.innerText.includes("塌塌米")) {
+                            btn.focus();
+                            break;
+                        }
+                    }
+                }, 150); // 延遲 150ms 以覆蓋 updateScene 預設的標題焦點 (100ms)
+            }
         }
 
         function renderDesk() {
